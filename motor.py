@@ -6,7 +6,7 @@ class LkMotor:
     def __init__(self, port: str, baudrate: int = 115200, motor_id: int = 1):
         self.motor_id = motor_id
         self.ser = serial.Serial(port=port, baudrate=baudrate, timeout=3)
-        if nost self.ser.is_open:
+        if not self.ser.is_open:
             self.ser.open()
 
     def send_command(self, cmd: int, data: list[int] = [], expect_reply_len: int = 0) -> bytes:
