@@ -1,5 +1,3 @@
-# protocol.py
-
 class MotorProtocolError(Exception): pass
 class MotorTimeoutError(IOError): pass
 class InvalidHeaderError(MotorProtocolError): pass

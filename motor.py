@@ -1,18 +1,12 @@
 import serial
 import time
-# from protocol import (
-#     checksum, verify_checksum, build_frame,
-#     parse_status1, parse_status2, parse_encoder,
-#     parse_angle64, parse_circle_angle,
-#     MotorTimeoutError, InvalidHeaderError, ChecksumError
-# )
 from protocol import *
 
 class LkMotor:
     def __init__(self, port: str, baudrate: int = 115200, motor_id: int = 1):
         self.motor_id = motor_id
         self.ser = serial.Serial(port=port, baudrate=baudrate, timeout=3)
-        if not self.ser.is_open:
+        if nost self.ser.is_open:
             self.ser.open()
 
     def send_command(self, cmd: int, data: list[int] = [], expect_reply_len: int = 0) -> bytes:

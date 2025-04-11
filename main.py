@@ -5,7 +5,7 @@ def safe_test():
         motor = LkMotor(port="/dev/ttyUSB0", motor_id=1)
 
         print("🟢 启动电机")
-        motor.enable()
+        motor.enables()
 
         print("📍 设置当前位置为零点（RAM）")
         motor.set_zero_ram()
