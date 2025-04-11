@@ -1,18 +1,35 @@
-# main.py
 from motor import LkMotor
 
-motor = LkMotor("/dev/ttyUSB0", motor_id=1)
+def safe_test():
+    try:
+        motor = LkMotor(port="/dev/ttyUSB0", motor_id=1)
 
-motor.enable()
-print("读取状态2:", motor.read_status_2())
+        print("🟢 启动电机")
+        motor.enable()
 
-motor.set_speed(90.0)  # 90°/s
-print("设置速度为 90 dps")
+        print("📍 设置当前位置为零点（RAM）")
+        motor.set_zero_ram()
 
-motor.move_to_position(360.0)  # 旋转到 360 度
-print("电机转动至 360°")
+        print("🌀 转动 +30° 单圈（顺时针）")
+        motor.move_single_circle(angle_deg=30.0, clockwise=True)
 
-encoder = motor.read_encoder()
-print("当前编码器状态:", encoder)
+        print("⏳ 等待 1 秒")
+        time.sleep(1)
 
-motor.disable()
+        angle = motor.read_multi_turn_angle()
+        print(f"📊 当前多圈角度: {angle:.2f}°")
+
+        print("🔴 关闭电机")
+        motor.disable()
+
+    except MotorTimeoutError:
+        print("❌ 通信超时，未收到电机回应")
+    except InvalidHeaderError:
+        print("❌ 帧头错误")
+    except ChecksumError:
+        print("❌ 校验失败")
+    except Exception as e:
+        print(f"❌ 其他异常: {e}")
+
+if __name__ == "__main__":
+    safe_test()
