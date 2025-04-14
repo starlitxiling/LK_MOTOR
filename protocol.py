@@ -11,15 +11,15 @@ def verify_checksum(data: bytes) -> bool:
     return checksum(list(data[:-1])) == data[-1]
 
 def build_frame(cmd: int, motor_id: int, data: list[int] = []) -> bytes:
-    header = 0x3E
-    length = len(data)
-    frame = [header, cmd, motor_id, length]
-    frame.append(checksum(frame))
-    if data:
-        frame.extend(data)
-        frame.append(checksum(data))
-    return bytes(frame)
+    header = [0x3E, cmd, motor_id, len(data)]
+    header_sum = checksum(header)
+    frame = header + [header_sum]
 
+    if data:
+        data_sum = checksum(data)
+        frame += data + [data_sum]
+
+    return bytes(frame)
 
 def parse_status1(data: bytes):
     return {
