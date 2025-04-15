@@ -1,9 +1,3 @@
-"""
-group.py
-
-定义 MotorGroup 类用于统一管理多个 LkMotor 实例。
-"""
-
 class MotorGroup:
     def __init__(self):
         self.motors = {}

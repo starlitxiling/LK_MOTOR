@@ -31,18 +31,14 @@ class LkMotor:
 
         if expect_reply_len > 0:
             resp = self.ser.read(expect_reply_len)
-            print(f"📥 实际读取到 {len(resp)} 字节: {resp.hex()}")
 
             if len(resp) != expect_reply_len:
-                print("⚠️ 长度不足，预期:", expect_reply_len, "收到:", len(resp))
                 raise MotorTimeoutError("Timeout or incomplete response")
 
             if resp[0] != 0x3E:
-                print("⚠️ 帧头错误，应为 0x3E，实际为:", hex(resp[0]))
                 raise InvalidHeaderError("Invalid frame header")
 
             if not verify_checksum(resp[5:]):
-                print("⚠️ 校验失败：数据段为", resp[5:].hex())
                 raise ChecksumError("Invalid data checksum")
 
             return resp
@@ -94,7 +90,6 @@ class LkMotor:
     def read_multi_turn_angle(self):
         """命令 0x92：读取多圈角度（单位：0.01°，8字节）"""
         resp = self.send_command(0x92, [], expect_reply_len=14)
-        print("↩ 原始返回:", resp.hex())
         return parse_angle64(resp[5:])
 
     def read_single_turn_angle(self):

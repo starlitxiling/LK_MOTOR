@@ -29,11 +29,6 @@ def build_frame(cmd: int, motor_id: int, data: list[int] = []) -> bytes:
         frame += data + [checksum(data)]
     return bytes(frame)
 
-
-# ========================
-# 数据解析函数
-# ========================
-
 def parse_status1(data: bytes) -> dict:
     """
     解析“状态1”数据结构（命令 0x9A）
