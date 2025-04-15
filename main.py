@@ -1,35 +1,54 @@
-from motor import LkMotor
+from motor.motor import LkMotor
+import time
 
-def safe_test():
-    try:
-        motor = LkMotor(port="/dev/ttyUSB0", motor_id=1)
+def main():
+    motor = LkMotor(port="/dev/tty.usbserial-AQ04HHBG", motor_id=1)
 
-        print("🟢 启动电机")
-        motor.enables()
+    print("🟢 启动电机")
+    motor.enable()
+    time.sleep(0.5)
 
-        print("📍 设置当前位置为零点（RAM）")
-        motor.set_zero_ram()
+    print("📍 设置当前位置为零点")
+    motor.set_zero_ram()
+    time.sleep(0.5)
 
-        print("🌀 转动 +30° 单圈（顺时针）")
-        motor.move_single_circle(angle_deg=30.0, clockwise=True)
+    # print("🔄 向正方向输出扭矩（Iq = +10）")
+    # motor.set_torque(50),
+    # time.sleep(1.5)
 
-        print("⏳ 等待 1 秒")
-        time.sleep(1)
+    # print("🔄 向负方向输出扭矩（Iq = -10）")
+    # motor.set_torque(-50)
+    # time.sleep(1.5)
 
-        angle = motor.read_multi_turn_angle()
-        print(f"📊 当前多圈角度: {angle:.2f}°")
+    print("🛑 停止输出扭矩")
+    motor.set_torque(0)
+    time.sleep(0.5)
+    
+    # motor.refresh() // 控制前要先刷新
+    # motor.apply_mit_control(
+    #     q_desired=motor.position + 10.0,  # 偏离当前位置10°
+    #     dq_desired=0.0,
+    #     kp=2.0,
+    #     kd=0.05
+    # )
+    
+    motor.refresh()
+    motor.apply_mit_control(
+        q_desired=motor.position + 10.0,
+        dq_desired=0.0,
+        kp=2.0,
+        kd=0.05
+    )
+    time.sleep(0.01)
+    
+    print("📥 刷新状态读取")
+    motor.refresh()
+    print(f"当前角度: {motor.position:.2f}°")
+    print(f"当前速度: {motor.velocity:.2f} deg/s")
+    print(f"当前电流/力矩: {motor.torque:.2f}")
 
-        print("🔴 关闭电机")
-        motor.disable()
-
-    except MotorTimeoutError:
-        print("❌ 通信超时，未收到电机回应")
-    except InvalidHeaderError:
-        print("❌ 帧头错误")
-    except ChecksumError:
-        print("❌ 校验失败")
-    except Exception as e:
-        print(f"❌ 其他异常: {e}")
+    print("🔴 关闭电机")
+    motor.disable()
 
 if __name__ == "__main__":
-    safe_test()
+    main()
