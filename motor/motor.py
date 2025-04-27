@@ -8,12 +8,12 @@ class LkMotor:
     用于控制瓴控电机的串口控制类，封装了所有典型控制命令。
     支持：开环、闭环扭矩、速度、多圈位置、单圈位置、增量控制等。
     """
-    def __init__(self, port: str, baudrate: int = 115200, motor_id: int = 1):
+    def __init__(self, port: str, baudrate: int = 460800, motor_id: int = 1):
         """
         初始化串口连接和电机 ID。
         """
         self.motor_id = motor_id
-        self.ser = serial.Serial(port=port, baudrate=baudrate, timeout=3)
+        self.ser = serial.Serial(port=port, baudrate=baudrate, timeout=0.05)
         if not self.ser.is_open:
             self.ser.open()
         self.position = None  # 多圈角度，单位度
@@ -27,7 +27,7 @@ class LkMotor:
         self.ser.reset_input_buffer()
         frame = build_frame(cmd, self.motor_id, data)
         self.ser.write(frame)
-        time.sleep(0.5)
+        # time.sleep(0.005)
 
         if expect_reply_len > 0:
             resp = self.ser.read(expect_reply_len)
@@ -43,6 +43,14 @@ class LkMotor:
 
             return resp
         return b''
+    def send_raw_command(self, cmd: int, data: list[int]):
+        """
+        发送不需要读取回应的快速控制命令（如 MIT 控制）
+        """
+        try:
+            self.send_command(cmd=cmd, data=data, expect_reply_len=0)
+        except Exception as e:
+            print(f"[Motor ID {self.motor_id}] 快速命令失败: {e}")
 
     def enable(self):
         """命令 0x88：启动电机"""
@@ -90,6 +98,7 @@ class LkMotor:
     def read_multi_turn_angle(self):
         """命令 0x92：读取多圈角度（单位：0.01°，8字节）"""
         resp = self.send_command(0x92, [], expect_reply_len=14)
+        print(resp)
         return parse_angle64(resp[5:])
 
     def read_single_turn_angle(self):
@@ -104,12 +113,19 @@ class LkMotor:
         bytes_ = list(power.to_bytes(2, 'little', signed=True))
         self.send_command(0xA0, bytes_)
 
-    def set_torque(self, iq: int):
+    def set_torque(self, iq: float):
         """
-        命令 0xA1：扭矩环控制，输入目标电流Iq
+        命令 0xA1：扭矩环控制，输入目标电流Iq（单位：A）
         """
-        bytes_ = list(iq.to_bytes(2, 'little', signed=True))
+        iq_int = int(round(iq))
+        iq_int = max(-2047, min(2047, iq_int))
+        bytes_ = list(iq_int.to_bytes(2, 'little', signed=True))
         self.send_command(0xA1, bytes_)
+
+    def set_torque_nm(self, torque: float, kt: float = 0.0482):
+        iq = torque / kt
+        self.set_torque(iq)
+
 
     def set_speed(self, speed_dps: float):
         """
@@ -206,7 +222,7 @@ class LkMotor:
     def refresh(self):
         """
         刷新当前电机状态，更新 self.position / velocity / torque。
-        建议在控制循环中每次调用一次。
+        使用单圈角度（单位：°）
         """
         try:
             self.position = self.read_multi_turn_angle()
@@ -217,17 +233,91 @@ class LkMotor:
             print(f"[Motor ID {self.motor_id}] 刷新失败: {e}")
             self.position = self.velocity = self.torque = None
 
-    def apply_mit_control(self, q_desired, dq_desired, kp, kd):
+    def read_device_info(self) -> dict:
         """
-        MIT 控制接口：根据目标位置/速度计算目标力矩并通过 set_torque() 发出。
-        注意：你应确保先调用 refresh() 更新实际状态。
+        读取电机型号/驱动版本等设备信息（使用 0x12 命令）
         """
-        if self.position is None or self.velocity is None:
-            raise RuntimeError("请先调用 refresh() 刷新状态")
+        # 构造请求帧
+        header = [0x3E, 0x12, self.motor_id, 0x00]
+        checksum = sum(header) & 0xFF
+        frame = bytes(header + [checksum])
+        self.ser.write(frame)
+        time.sleep(0.05)
 
-        error_pos = self.position - q_desired
-        error_vel = self.velocity - dq_desired
-        torque = -kp * error_pos - kd * error_vel
+        # 期望返回：5字节帧头 + 58字节数据 + 1字节数据校验 = 64字节
+        resp = self.ser.read(64)
+        if len(resp) != 64:
+            raise IOError(f"响应长度错误，仅收到 {len(resp)} 字节")
 
-        iq = int(torque)
-        self.set_torque(iq)
+        if resp[0] != 0x3E or resp[1] != 0x12 or resp[2] != self.motor_id or resp[3] != 0x3A:
+            raise ValueError("帧头验证失败，非合法设备信息帧")
+
+        expected_header_checksum = sum(resp[0:4]) & 0xFF
+        if resp[4] != expected_header_checksum:
+            raise ValueError("帧头校验失败")
+
+        data = resp[5:63]
+        data_checksum = sum(data) & 0xFF
+        if resp[63] != data_checksum:
+            raise ValueError("数据校验失败")
+
+        def extract_string(segment: bytes) -> str:
+            return segment.split(b'\x00')[0].decode('ascii', errors='ignore').strip()
+
+        return {
+            "driver_name": extract_string(data[0:20]),
+            "motor_name": extract_string(data[20:40]),
+            "motor_id": extract_string(data[40:52]),
+            "hardware_version": int.from_bytes(data[52:54], "little"),
+            "motor_version": int.from_bytes(data[54:56], "little"),
+            "firmware_version": int.from_bytes(data[56:58], "little"),
+        }
+    
+    def apply_mit_control(self, q_desired, dq_desired, kp, kd, torque_offset=0.0):
+        """
+        MIT控制，使用期望位置、速度和力矩进行控制。
+        参数单位：
+            q_desired      - 期望位置（°）
+            dq_desired     - 期望速度（°/s）
+            kp             - 位置环增益
+            kd             - 速度环增益
+            torque_offset  - 期望输出力矩（Nm）
+        """
+
+        Q_MAX = 360.0
+        DQ_MAX = 2000.0
+        TAU_MAX = 33.0
+        IQ_MAX = 2048
+
+        q_uint = float_to_uint(q_desired, -Q_MAX, Q_MAX, 16)
+        dq_uint = float_to_uint(dq_desired, -DQ_MAX, DQ_MAX, 12)
+        kp_uint = float_to_uint(kp, 0, 500, 12)
+        kd_uint = float_to_uint(kd, 0, 5, 12)
+
+        KT = 0.048
+        iq = torque_offset / KT
+        iq = max(-33, min(33, iq))
+        tau_uint = float_to_uint(iq, -33.0, 33.0, 12)
+
+        # 打包帧数据
+        buf = [0]*8
+        buf[0] = (q_uint >> 8) & 0xFF
+        buf[1] = q_uint & 0xFF
+        buf[2] = (dq_uint >> 4) & 0xFF
+        buf[3] = ((dq_uint & 0xF) << 4) | ((kp_uint >> 8) & 0xF)
+        buf[4] = kp_uint & 0xFF
+        buf[5] = (kd_uint >> 4) & 0xFF
+        buf[6] = ((kd_uint & 0xF) << 4) | ((tau_uint >> 8) & 0xF)
+        buf[7] = tau_uint & 0xFF
+
+        self.send_raw_command(cmd=0xA8, data=buf)
+
+    def is_valid(self):
+        return (
+            self.position is not None and
+            self.velocity is not None and
+            self.torque is not None
+        )
+
+
+

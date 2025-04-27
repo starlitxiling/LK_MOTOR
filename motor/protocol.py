@@ -65,3 +65,9 @@ def parse_angle64(data: bytes) -> float:
 def parse_circle_angle(data: bytes) -> float:
     """解析 4 字节单圈角度数据（0x94），单位 0.01°"""
     return int.from_bytes(data[0:4], 'little') / 100.0
+
+def float_to_uint(x: float, x_min: float, x_max: float, bits: int) -> int:
+    span = x_max - x_min
+    base = x_min
+    x = min(max(x, x_min), x_max)
+    return int((x - base) * ((1 << bits) - 1) / span)
