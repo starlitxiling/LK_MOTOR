@@ -13,11 +13,11 @@ class LkMotor:
         初始化串口连接和电机 ID。
         """
         self.motor_id = motor_id
-        self.ser = serial.Serial(port=port, baudrate=baudrate, timeout=0.05)
+        self.ser = serial.Serial(port=port, baudrate=baudrate, timeout=0.02)
         if not self.ser.is_open:
             self.ser.open()
-        self.position = None  # 多圈角度，单位度
-        self.velocity = None  # 速度，单位 deg/s
+        self.position = None  # 多圈角度，单位弧度
+        self.velocity = None  # 速度，单位 弧度/s
         self.torque = None    # 当前 Iq 电流，近似力矩
 
     def send_command(self, cmd: int, data: list[int] = [], expect_reply_len: int = 0) -> bytes:
@@ -96,15 +96,19 @@ class LkMotor:
         return parse_encoder(resp[5:])
 
     def read_multi_turn_angle(self):
-        """命令 0x92：读取多圈角度（单位：0.01°，8字节）"""
         resp = self.send_command(0x92, [], expect_reply_len=14)
-        print(resp)
-        return parse_angle64(resp[5:])
+        motor_angle_deg = parse_angle64(resp[5:13]) / 10.0
+        radian = degree_to_radian(motor_angle_deg)
+        # print(f"[Motor ID {self.motor_id}] 多圈角度解析: {motor_angle_deg:+.2f}°")
+        return radian
 
     def read_single_turn_angle(self):
         """命令 0x94：读取单圈角度（单位：0.01°，4字节）"""
         resp = self.send_command(0x94, [], expect_reply_len=10)
-        return parse_circle_angle(resp[5:])
+        # 单圈是 4 字节，单位 0.01°
+        circle_angle_raw = int.from_bytes(resp[5:9], byteorder='little', signed=False)
+        circle_angle_deg = circle_angle_raw / 100.0
+        return circle_angle_deg
 
     def set_open_loop(self, power: int):
         """
@@ -117,12 +121,16 @@ class LkMotor:
         """
         命令 0xA1：扭矩环控制，输入目标电流Iq（单位：A）
         """
-        iq_int = int(round(iq))
-        iq_int = max(-2047, min(2047, iq_int))
-        bytes_ = list(iq_int.to_bytes(2, 'little', signed=True))
-        self.send_command(0xA1, bytes_)
+        try:
+            iq_scaled = iq * (2048 / 33.0)
+            iq_int = int(round(iq_scaled))
+            iq_int = max(-2048, min(2047, iq_int))
+            bytes_ = list(iq_int.to_bytes(2, 'little', signed=True))
+            self.send_command(0xA1, bytes_)
+        except Exception as e:
+            print("发送扭矩失败")
 
-    def set_torque_nm(self, torque: float, kt: float = 0.0482):
+    def set_torque_nm(self, torque: float, kt: float = 0.09):
         iq = torque / kt
         self.set_torque(iq)
 
@@ -131,7 +139,7 @@ class LkMotor:
         """
         命令 0xA2：速度环控制，单位 deg/s，内部以 0.01°/s 表示
         """
-        val = int(speed_dps * 100)
+        val = int(speed_dps * 1000)
         bytes_ = list(val.to_bytes(4, 'little', signed=True))
         self.send_command(0xA2, bytes_)
 
@@ -226,12 +234,26 @@ class LkMotor:
         """
         try:
             self.position = self.read_multi_turn_angle()
-            status = self.read_status_2()
-            self.velocity = status.get("speed_dps", 0.0)
-            self.torque = status.get("iq_or_power", 0.0)
+            # time.sleep(0.01)
         except Exception as e:
-            print(f"[Motor ID {self.motor_id}] 刷新失败: {e}")
-            self.position = self.velocity = self.torque = None
+            print(f"[Motor ID {self.motor_id}] 读取位置失败: {e} --------------------------------")
+
+        time.sleep(0.002)
+
+        try:
+            status = self.read_status_2()
+            # print("***********************************************************************")
+            # print(status)
+            vel_deg_per_sec = status.get("speed_dps", 0.0) / 10.0
+            self.velocity = degree_to_radian(vel_deg_per_sec)
+            iq_control = status.get("iq_or_power", 0.0)
+            # print(f"IQ_Control={iq_control:+.2f} ")
+            iq = iq_control / 2048.00 * 33.0
+            # print(f"iq={iq:+.2f}")
+            KT = 0.09
+            self.torque = iq * KT * 10
+        except Exception as e:
+            print("[Motor ID {self.motor_id}] 读取速度失败: {e} -------------------------------")
 
     def read_device_info(self) -> dict:
         """
@@ -252,11 +274,12 @@ class LkMotor:
         if resp[0] != 0x3E or resp[1] != 0x12 or resp[2] != self.motor_id or resp[3] != 0x3A:
             raise ValueError("帧头验证失败，非合法设备信息帧")
 
+        # 校验帧头
         expected_header_checksum = sum(resp[0:4]) & 0xFF
         if resp[4] != expected_header_checksum:
             raise ValueError("帧头校验失败")
 
-        data = resp[5:63]
+        data = resp[5:63]  # 正确：取 58 字节
         data_checksum = sum(data) & 0xFF
         if resp[63] != data_checksum:
             raise ValueError("数据校验失败")
@@ -272,7 +295,7 @@ class LkMotor:
             "motor_version": int.from_bytes(data[54:56], "little"),
             "firmware_version": int.from_bytes(data[56:58], "little"),
         }
-    
+
     def apply_mit_control(self, q_desired, dq_desired, kp, kd, torque_offset=0.0):
         """
         MIT控制，使用期望位置、速度和力矩进行控制。
@@ -285,21 +308,21 @@ class LkMotor:
         """
 
         Q_MAX = 360.0
-        DQ_MAX = 2000.0
+        DQ_MAX = 2000.0 * 100
         TAU_MAX = 33.0
         IQ_MAX = 2048
 
         q_uint = float_to_uint(q_desired, -Q_MAX, Q_MAX, 16)
-        dq_uint = float_to_uint(dq_desired, -DQ_MAX, DQ_MAX, 12)
+        dq_scaled = dq_desired * 100 
+        dq_uint = float_to_uint(dq_scaled, -DQ_MAX, DQ_MAX, 12)
         kp_uint = float_to_uint(kp, 0, 500, 12)
         kd_uint = float_to_uint(kd, 0, 5, 12)
 
-        KT = 0.048
+        KT = 1.1
         iq = torque_offset / KT
         iq = max(-33, min(33, iq))
         tau_uint = float_to_uint(iq, -33.0, 33.0, 12)
 
-        # 打包帧数据
         buf = [0]*8
         buf[0] = (q_uint >> 8) & 0xFF
         buf[1] = q_uint & 0xFF
@@ -318,6 +341,3 @@ class LkMotor:
             self.velocity is not None and
             self.torque is not None
         )
-
-
-
