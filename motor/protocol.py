@@ -1,3 +1,5 @@
+import math
+
 class MotorProtocolError(Exception): pass
 class MotorTimeoutError(IOError): pass
 class InvalidHeaderError(MotorProtocolError): pass
@@ -59,8 +61,20 @@ def parse_encoder(data: bytes) -> dict:
     }
 
 def parse_angle64(data: bytes) -> float:
-    """解析 8 字节多圈角度数据（0x92），单位 0.01°"""
-    return int.from_bytes(data[0:8], 'little', signed=True) / 100.0
+    """
+    解析多圈角度，单位是 0.01°
+    :param data: 8 bytes from frame
+    :return: 角度值，单位为°
+    """
+    if len(data) < 8:
+        raise ValueError(f"parse_angle64 需要至少8字节数据，实际收到 {len(data)} 字节")
+    
+    motor_angle_raw = int.from_bytes(data[0:8], byteorder='little', signed=True)
+
+    motor_angle_deg = motor_angle_raw / 100.0
+
+    return motor_angle_deg
+
 
 def parse_circle_angle(data: bytes) -> float:
     """解析 4 字节单圈角度数据（0x94），单位 0.01°"""
@@ -71,3 +85,9 @@ def float_to_uint(x: float, x_min: float, x_max: float, bits: int) -> int:
     base = x_min
     x = min(max(x, x_min), x_max)
     return int((x - base) * ((1 << bits) - 1) / span)
+
+def degree_to_radian(degree: float) -> float:
+    return degree * ( math.pi / 180.0)
+
+def radian_to_degree(radian: float) -> float:
+    return (radian * 180.0) / math.pi
