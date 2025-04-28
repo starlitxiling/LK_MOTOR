@@ -1,14 +1,18 @@
 from motor.motor import LkMotor
+from motor.protocol import radian_to_degree
 import time
-import math
 
-KP = 0.0008    # Nm/deg
-KD = 0.00     # Nm/(deg/s)
-TORQUE_LIMIT = 1.5  # 最大力矩限制（Nm）
-DT = 0.000           # 控制周期（秒）
+# KP = 2.0 / 2 / 6 / 2
+# KD = 0.01
 
-motor1 = LkMotor("/dev/tty.usbserial-AQ04HHBG", motor_id=1)
-motor2 = LkMotor("/dev/tty.usbserial-AQ04HHBG", motor_id=2)
+KP = 2.0 / 2 / 6 / 1.5
+KD = 0.01 / 1.5
+
+TORQUE_LIMIT = 2.5
+DT = 0.01
+
+motor1 = LkMotor("/dev/ttyUSB1", motor_id=1)
+motor2 = LkMotor("/dev/ttyUSB0", motor_id=2)
 
 print("启动电机")
 motor1.enable()
@@ -22,19 +26,17 @@ time.sleep(0.2)
 
 print("开始双电机互控")
 try:
-    cycle_times = []
-    last_freq_print = time.time()
-
     while True:
         loop_start = time.perf_counter()
         timestamp = time.strftime("[%H:%M:%S]", time.localtime())
 
+        time.sleep(0.01)
         motor1.refresh()
+        time.sleep(0.01)
         motor2.refresh()
 
         if not (motor1.is_valid() and motor2.is_valid()):
-            print("电机状态无效，跳过")
-            time.sleep(0.01)
+            # time.sleep(0.001)
             continue
 
         pos1, vel1 = motor1.getPosition(), motor1.getVelocity()
@@ -47,25 +49,29 @@ try:
         vel_error_2 = vel1 - vel2
 
         torque1 = KP * pos_error_1 + KD * vel_error_1
+        print(f"pos_torque1:{KP * pos_error_1:.2f}, vel_torque1:{KD * vel_error_1:.2f}")
         torque2 = KP * pos_error_2 + KD * vel_error_2
+        print(f"pos_torque1:{KP * pos_error_2:.2f}, vel_torque1:{KD * vel_error_2:.2f}")
 
         torque1 = max(-TORQUE_LIMIT, min(TORQUE_LIMIT, torque1))
         torque2 = max(-TORQUE_LIMIT, min(TORQUE_LIMIT, torque2))
 
-        print(f"{timestamp} Motor1 ← pos_error={pos_error_1:+.2f}°, vel_error={vel_error_1:+.2f}°/s, τ={torque1:+.2f}Nm")
-        print(f"{timestamp} Motor2 ← pos_error={pos_error_2:+.2f}°, vel_error={vel_error_2:+.2f}°/s, τ={torque2:+.2f}Nm")
-        print(f"{timestamp} 状态: Motor1[POS={pos1:+.2f}°, VEL={vel1:+.2f}°/s] | Motor2[POS={pos2:+.2f}°, VEL={vel2:+.2f}°/s]")
-        print("-" * 80)
-
-        motor1.set_torque_nm(torque1)
-        motor2.set_torque_nm(torque2)
-
+        print(f"{timestamp}")
+        print(f"Motor1 - POS={radian_to_degree(pos1):+.2f}°, VEL={radian_to_degree(vel1):+.2f}°/s, TORQUE={motor1.getTorque():+.3f}Nm")
+        print(f"Motor2 - POS={radian_to_degree(pos2):+.2f}°, VEL={radian_to_degree(vel2):+.2f}°/s, TORQUE={motor2.getTorque():+.3f}Nm")
+        print(f"误差 Motor1 ← pos_error={radian_to_degree(pos_error_1):+.2f}°, vel_error={radian_to_degree(vel_error_1):+.2f}°/s, 输出扭矩={torque1:+.3f}Nm")
+        print(f"误差 Motor2 ← pos_error={radian_to_degree(pos_error_2):+.2f}°, vel_error={radian_to_degree(vel_error_2):+.2f}°/s, 输出扭矩={torque2:+.3f}Nm")
+        
         loop_end = time.perf_counter()
         elapsed = loop_end - loop_start
+        # print(f"elapsed: {elapsed:.2f} s")
+        print(f"hz = {1/elapsed:.2f} Hz")
+        print("-" * 100)
 
-        print(f"elapsed = {elapsed:.6f} s")
+        motor1.set_torque_nm(torque1)
+        motor2.set_torque_nm(torque2)   
 
-        # time.sleep(max(0, DT - elapsed))
+        # time.sleep(max(0, DT - (loop_end - loop_start)))
 
 except KeyboardInterrupt:
     print("控制中断，关闭电机")

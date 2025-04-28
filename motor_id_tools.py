@@ -25,7 +25,7 @@ def scan_motor_ids(port: str):
             motor = LkMotor(port=port, motor_id=i)
             motor.refresh()
             if motor.position is not None:
-                print(f"ID={i}：角度={motor.position:.2f}°  速度={motor.velocity:.2f}°/s  扭矩={motor.torque:.2f}")
+                print(f"ID={i}：角度={motor.position:.2f} rad  速度={motor.velocity:.2f} rad/s  扭矩={motor.torque:.2f}")
             else:
                 print(f"ID={i}：连接成功但未返回状态数据")
         except Exception as e:
@@ -33,7 +33,9 @@ def scan_motor_ids(port: str):
 
 def main():
     print("=== LK Motor 工具菜单 ===")
-    port = "/dev/tty.usbserial-AQ04HHBG"
+    # port = input("请输入串口设备名（如 /dev/ttyUSB0）: ").strip()
+    # port = "/dev/tty.usbserial-AQ04HHBG"
+    port = "/dev/ttyUSB0"
 
     while True:
         print("\n请选择操作:")
